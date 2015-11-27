@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    <meta charset="UTF-8">
+    <title>Livelog by taskcluster</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" type="text/css" href="stylesheets/normalize.css" media="screen">
+    <link href='https://fonts.googleapis.com/css?family=Open+Sans:400,700' rel='stylesheet' type='text/css'>
+    <link rel="stylesheet" type="text/css" href="stylesheets/stylesheet.css" media="screen">
+    <link rel="stylesheet" type="text/css" href="stylesheets/github-light.css" media="screen">
+  </head>
+  <body>
+    <section class="page-header">
+      <h1 class="project-name">Livelog</h1>
+      <h2 class="project-tagline">continuous log serve prototype in go... </h2>
+      <a href="https://github.com/taskcluster/livelog" class="btn">View on GitHub</a>
+      <a href="https://github.com/taskcluster/livelog/zipball/master" class="btn">Download .zip</a>
+      <a href="https://github.com/taskcluster/livelog/tarball/master" class="btn">Download .tar.gz</a>
+    </section>
+
+    <section class="main-content">
+      <h1>
+<a id="livelog" class="anchor" href="#livelog" aria-hidden="true"><span class="octicon octicon-link"></span></a>livelog</h1>
+
+<p><img hspace="20" align="left" src="https://tools.taskcluster.net/lib/assets/taskcluster-120.png">
+<a href="http://travis-ci.org/taskcluster/livelog"><img src="https://travis-ci.org/taskcluster/livelog.svg?branch=master" alt="Build Status"></a>
+<a href="https://godoc.org/github.com/taskcluster/livelog"><img src="https://godoc.org/github.com/taskcluster/livelog?status.svg" alt="GoDoc"></a>
+<a href="https://coveralls.io/github/taskcluster/livelog?branch=master"><img src="https://coveralls.io/repos/taskcluster/livelog/badge.svg?branch=master&amp;service=github" alt="Coverage Status"></a>
+<a href="http://mozilla.org/MPL/2.0"><img src="https://img.shields.io/badge/license-MPL%202.0-orange.svg" alt="License"></a></p>
+
+<h2>
+<a id="todo" class="anchor" href="#todo" aria-hidden="true"><span class="octicon octicon-link"></span></a>TODO</h2>
+
+<ul>
+<li>[x] byte range fetching</li>
+<li>[x] aggregate pending writes into single buffer and/or multiple write
+then flush when no longer writing.</li>
+<li>[ ] cli</li>
+<li>[x] cross domain headers</li>
+<li>[x] http api</li>
+</ul>
+
+<p>Livelog is a service that enables both secure and insecure streaming of binary
+content (typically log files) over HTTP(S).</p>
+
+<p>It achieves this by exposing an interface for receiving log data via an HTTP
+PUT request on tcp port 60022, and exposing a separate interface for reading
+the log via HTTP GET on port 60023.</p>
+
+<p>It is written in go, which compiles to a native binary for most conceivable
+platforms, and can therefore be deployed almost anywhere.</p>
+
+<p>Multiple clients can concurrently access the GET interface, also specifying
+HTTP RANGE headers, while only a single client can PUT data. Furthermore, the
+log file content must be served to livelog with a single (long-lived) PUT
+request. The GET url is only available after the connection to the PUT
+interface has been initiated.</p>
+
+<h2>
+<a id="urls" class="anchor" href="#urls" aria-hidden="true"><span class="octicon octicon-link"></span></a>URLs</h2>
+
+<ul>
+<li>PUT: http(s)://localhost:60022/log</li>
+<li>GET: http(s)://localhost:60023/log/<code>${ACCESS_TOKEN}</code>
+</li>
+</ul>
+
+<p><code>ACCESS_TOKEN</code> is an arbitrary url-safe string that you provide via the
+<code>ACCESS_TOKEN</code> environment variable to the livelog process when it starts up.
+The provides some level or security via obscurity when managed as a secret
+between client and server, especially when used in combination with https.</p>
+
+<p>By default http is used, unless environment variables <code>SERVER_CRT_FILE</code> and
+<code>SERVER_KEY_FILE</code> environment variables are set, in which case these should
+specify the file location of suitable SSL certificate and key to be used for
+https transport.</p>
+
+<h2>
+<a id="binary-packages" class="anchor" href="#binary-packages" aria-hidden="true"><span class="octicon octicon-link"></span></a>Binary packages</h2>
+
+<p>See the <a href="https://github.com/taskcluster/livelog/releases">github releases</a> page.</p>
+
+<h2>
+<a id="example-usage" class="anchor" href="#example-usage" aria-hidden="true"><span class="octicon octicon-link"></span></a>Example Usage</h2>
+
+<p>Terminal 1: Start service</p>
+
+<pre><code>export ACCESS_TOKEN='secretpuppy'
+export DEBUG='*'
+livelog
+</code></pre>
+
+<p>Terminal 2: Pump data into the PUT interface</p>
+
+<pre><code>(for ((i=1; i&lt;=500; i++)); do echo "Log line $i"; sleep 1; done) | curl -v -T - http://localhost:60022/log
+</code></pre>
+
+<p>Terminal 3: Read from GET interface</p>
+
+<pre><code>curl http://localhost:60023/log/secretpuppy
+</code></pre>
+
+<h2>
+<a id="performance" class="anchor" href="#performance" aria-hidden="true"><span class="octicon octicon-link"></span></a>Performance</h2>
+
+<p>Under heavy load while memory does not massively explode it does spike
+and due to how go returns memory to the OS the memory will stay at that
+level for up to 5 minutes. The best case situation is a low number of
+clients (or no clients) who stream from beginning to end [this should be
+uncommon]. For the more likely case (burst usage) the server is fairly
+aggressive about closing connections with large amounts of pending data.
+This means that the server can handle massive load and deliver some
+amount of writes but drop other clients as needed in a mostly
+first-come-first-server fashion (really also depends on how fast clients
+can read from the socket).</p>
+
+<h2>
+<a id="tests" class="anchor" href="#tests" aria-hidden="true"><span class="octicon octicon-link"></span></a>Tests</h2>
+
+<p>Tests are written in Node.JS largely because I wanted to write some
+quickly and node has a great/easy interface to do the nonblocking
+http stuff I wanted.</p>
+
+<p>Usage:</p>
+
+<div class="highlight highlight-source-shell"><pre>npm install
+npm <span class="pl-c1">test</span></pre></div>
+
+<h2>
+<a id="configuration" class="anchor" href="#configuration" aria-hidden="true"><span class="octicon octicon-link"></span></a>Configuration</h2>
+
+<p>The following environment variables can be used to configure the server.</p>
+
+<ul>
+<li>
+<code>ACCESS_TOKEN</code> secret access token required for access (<strong>required</strong>)</li>
+<li>
+<code>SERVER_CRT_FILE</code> path to SSL certificate file (optional)</li>
+<li>
+<code>SERVER_KEY_FILE</code> path to SSL private key file (optional)</li>
+<li>
+<code>DEBUG</code> set to '*' to see debug logs (optional)</li>
+</ul>
+
+      <footer class="site-footer">
+        <span class="site-footer-owner"><a href="https://github.com/taskcluster/livelog">Livelog</a> is maintained by <a href="https://github.com/taskcluster">taskcluster</a>.</span>
+
+        <span class="site-footer-credits">This page was generated by <a href="https://pages.github.com">GitHub Pages</a> using the <a href="https://github.com/jasonlong/cayman-theme">Cayman theme</a> by <a href="https://twitter.com/jasonlong">Jason Long</a>.</span>
+      </footer>
+
+    </section>
+
+  
+  </body>
+</html>
