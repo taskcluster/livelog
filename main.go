@@ -144,33 +144,29 @@ func main() {
 		attachProfiler(routes)
 	}
 
-	putAddr := fmt.Sprintf(":%v", DEFAULT_PUT_PORT)
-	if putPort := os.Getenv("LIVELOG_PUT_PORT"); putPort != "" {
-		pp, err := strconv.Atoi(putPort)
-		if err != nil {
-			debug("env var LIVELOG_PUT_PORT is not a number (%v)", putPort)
-			os.Exit(64)
+	// portAddressOrExit is a helper function to translate a port number in an
+	// envronment variable into a valid address string which can be used when
+	// starting web service. This helper function will cause the go program to
+	// exit if an invalid value is specified in the environment variable.
+	portAddressOrExit := func(envVar string, defaultValue uint16, notANumberExitCode, outOfRangeExitCode int) (addr string) {
+		addr = fmt.Sprintf(":%v", defaultValue)
+		if port := os.Getenv(envVar); port != "" {
+			p, err := strconv.Atoi(port)
+			if err != nil {
+				debug("env var %v is not a number (%v)", envVar, port)
+				os.Exit(notANumberExitCode)
+			}
+			if p < 0 || p > 65535 {
+				debug("env var %v is not between [0, 65535] (%v)", envVar, p)
+				os.Exit(outOfRangeExitCode)
+			}
+			addr = ":" + port
 		}
-		if pp < 0 || pp > 65535 {
-			debug("env var LIVELOG_PUT_PORT is not between [0, 65535] (%v)", pp)
-			os.Exit(65)
-		}
-		putAddr = ":" + putPort
+		return
 	}
 
-	getAddr := fmt.Sprintf(":%v", DEFAULT_GET_PORT)
-	if getPort := os.Getenv("LIVELOG_GET_PORT"); getPort != "" {
-		gp, err := strconv.Atoi(getPort)
-		if err != nil {
-			debug("env var LIVELOG_GET_PORT is not a number (%v)", getPort)
-			os.Exit(66)
-		}
-		if gp < 0 || gp > 65535 {
-			debug("env var LIVELOG_GET_PORT is not between [0, 65535] (%v)", gp)
-			os.Exit(67)
-		}
-		getAddr = ":" + getPort
-	}
+	putAddr := portAddressOrExit("LIVELOG_PUT_PORT", DEFAULT_PUT_PORT, 64, 65)
+	getAddr := portAddressOrExit("LIVELOG_GET_PORT", DEFAULT_GET_PORT, 66, 67)
 
 	server := http.Server{
 		// Main put server listens on the public root for the worker.
