@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"os"
+	"strconv"
 	"sync"
 
 	stream "github.com/taskcluster/livelog/writer"
@@ -13,6 +14,11 @@ import (
 )
 
 var debug = Debug("livelog")
+
+const (
+	DEFAULT_PUT_PORT = 60022
+	DEFAULT_GET_PORT = 60023
+)
 
 func abort(writer http.ResponseWriter) error {
 	// We need to hijack and abort the request...
@@ -28,7 +34,7 @@ func abort(writer http.ResponseWriter) error {
 	return nil
 }
 
-func startLogServe(stream *stream.Stream) {
+func startLogServe(stream *stream.Stream, getAddr string) {
 	// Get access token from environment variable
 	accessToken := os.Getenv("ACCESS_TOKEN")
 
@@ -51,7 +57,7 @@ func startLogServe(stream *stream.Stream) {
 	})
 
 	server := http.Server{
-		Addr:    ":60023",
+		Addr:    getAddr,
 		Handler: routes,
 	}
 
@@ -138,9 +144,37 @@ func main() {
 		attachProfiler(routes)
 	}
 
+	putAddr := fmt.Sprintf(":%v", DEFAULT_PUT_PORT)
+	if putPort := os.Getenv("LIVELOG_PUT_PORT"); putPort != "" {
+		pp, err := strconv.Atoi(putPort)
+		if err != nil {
+			debug("env var LIVELOG_PUT_PORT is not a number (%v)", putPort)
+			os.Exit(64)
+		}
+		if pp < 0 || pp > 65535 {
+			debug("env var LIVELOG_PUT_PORT is not between [0, 65535] (%v)", pp)
+			os.Exit(65)
+		}
+		putAddr = ":" + putPort
+	}
+
+	getAddr := fmt.Sprintf(":%v", DEFAULT_GET_PORT)
+	if getPort := os.Getenv("LIVELOG_GET_PORT"); getPort != "" {
+		gp, err := strconv.Atoi(getPort)
+		if err != nil {
+			debug("env var LIVELOG_GET_PORT is not a number (%v)", getPort)
+			os.Exit(66)
+		}
+		if gp < 0 || gp > 65535 {
+			debug("env var LIVELOG_GET_PORT is not between [0, 65535] (%v)", gp)
+			os.Exit(67)
+		}
+		getAddr = ":" + getPort
+	}
+
 	server := http.Server{
 		// Main put server listens on the public root for the worker.
-		Addr:    ":60022",
+		Addr:    putAddr,
 		Handler: routes,
 	}
 
@@ -186,7 +220,7 @@ func main() {
 
 		// Initialize the sub server in another go routine...
 		debug("Begin consuming...")
-		go startLogServe(stream)
+		go startLogServe(stream, getAddr)
 		consumeErr := stream.Consume()
 		if consumeErr != nil {
 			log.Println("Error finalizing consume of stream", consumeErr)
