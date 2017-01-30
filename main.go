@@ -47,10 +47,16 @@ func startLogServe(stream *stream.Stream, getAddr string) {
 		// URL and comparing the reminder to the accessToken, ensuring a URL pattern
 		// /log/<accessToken>
 		if r.URL.String()[5:] != accessToken {
-			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			w.Header().Set("Access-Control-Allow-Origin", "*")
+			writeHeaders(w, r)
 			w.WriteHeader(401)
 			fmt.Fprint(w, "Access denied")
+		} else if r.Method == "HEAD" {
+			writeHeaders(w, r)
+			// If we are creating a HEAD request, we can also mark that the subsequent
+			// GET request exposes access to X-Streaming
+			w.Header().Set("Access-Control-Allow-Headers", "X-Streaming")
+			w.WriteHeader(200)
+			debug("Sending HEAD request headers")
 		} else {
 			getLog(stream, w, r)
 		}
@@ -72,6 +78,20 @@ func startLogServe(stream *stream.Stream, getAddr string) {
 		debug("Output server listening... %s (without TLS)", server.Addr)
 		server.ListenAndServe()
 	}
+}
+
+func writeHeaders(
+	writer http.ResponseWriter,
+	req *http.Request,
+) {
+	// TODO: Allow the input stream to configure headers rather then assume
+	// intentions...
+	writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	writer.Header().Set("Access-Control-Allow-Origin", "*")
+	writer.Header().Set("X-Streaming", "true")
+	writer.Header().Set("Access-Control-Expose-Headers", "X-Streaming")
+
+	log.Printf("%v", req.Header)
 }
 
 // HTTP logic for serving the contents of a stream...
@@ -98,15 +118,8 @@ func getLog(
 		debug("send connection close...")
 	}()
 
-	// TODO: Allow the input stream to configure headers rather then assume
-	// intentions...
-	writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	writer.Header().Set("Access-Control-Allow-Origin", "*")
-	writer.Header().Set("Access-Control-Expose-Headers", "Transfer-Encoding")
-
-	log.Printf("%v", req.Header)
-
 	// Send headers so its clear what we are trying to do...
+	writeHeaders(writer, req)
 	writer.WriteHeader(200)
 	debug("wrote headers...")
 
