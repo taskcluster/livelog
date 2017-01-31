@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"os"
-	"strconv"
 	"sync"
 
 	stream "github.com/taskcluster/livelog/writer"
@@ -14,11 +13,6 @@ import (
 )
 
 var debug = Debug("livelog")
-
-const (
-	DEFAULT_PUT_PORT = 60022
-	DEFAULT_GET_PORT = 60023
-)
 
 func abort(writer http.ResponseWriter) error {
 	// We need to hijack and abort the request...
@@ -34,7 +28,7 @@ func abort(writer http.ResponseWriter) error {
 	return nil
 }
 
-func startLogServe(stream *stream.Stream, getAddr string) {
+func startLogServe(stream *stream.Stream) {
 	// Get access token from environment variable
 	accessToken := os.Getenv("ACCESS_TOKEN")
 
@@ -47,17 +41,23 @@ func startLogServe(stream *stream.Stream, getAddr string) {
 		// URL and comparing the reminder to the accessToken, ensuring a URL pattern
 		// /log/<accessToken>
 		if r.URL.String()[5:] != accessToken {
-			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			w.Header().Set("Access-Control-Allow-Origin", "*")
+			writeHeaders(w, r)
 			w.WriteHeader(401)
 			fmt.Fprint(w, "Access denied")
+		} else if r.Method == "HEAD" {
+			writeHeaders(w, r)
+			w.WriteHeader(200)
+			debug("Sending HEAD request headers")
+		} else if r.Method != "GET" {
+			w.WriteHeader(405)
+			fmt.Fprint(w, "method not allowed")
 		} else {
 			getLog(stream, w, r)
 		}
 	})
 
 	server := http.Server{
-		Addr:    getAddr,
+		Addr:    ":60023",
 		Handler: routes,
 	}
 
@@ -72,6 +72,20 @@ func startLogServe(stream *stream.Stream, getAddr string) {
 		debug("Output server listening... %s (without TLS)", server.Addr)
 		server.ListenAndServe()
 	}
+}
+
+func writeHeaders(
+	writer http.ResponseWriter,
+	req *http.Request,
+) {
+	// TODO: Allow the input stream to configure headers rather then assume
+	// intentions...
+	writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	writer.Header().Set("Access-Control-Allow-Origin", "*")
+	writer.Header().Set("X-Streaming", "true")
+	writer.Header().Set("Access-Control-Expose-Headers", "X-Streaming")
+
+	log.Printf("%v", req.Header)
 }
 
 // HTTP logic for serving the contents of a stream...
@@ -98,15 +112,8 @@ func getLog(
 		debug("send connection close...")
 	}()
 
-	// TODO: Allow the input stream to configure headers rather then assume
-	// intentions...
-	writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	writer.Header().Set("Access-Control-Allow-Origin", "*")
-	writer.Header().Set("Access-Control-Expose-Headers", "Transfer-Encoding")
-
-	log.Printf("%v", req.Header)
-
 	// Send headers so its clear what we are trying to do...
+	writeHeaders(writer, req)
 	writer.WriteHeader(200)
 	debug("wrote headers...")
 
@@ -145,33 +152,9 @@ func main() {
 		attachProfiler(routes)
 	}
 
-	// portAddressOrExit is a helper function to translate a port number in an
-	// envronment variable into a valid address string which can be used when
-	// starting web service. This helper function will cause the go program to
-	// exit if an invalid value is specified in the environment variable.
-	portAddressOrExit := func(envVar string, defaultValue uint16, notANumberExitCode, outOfRangeExitCode int) (addr string) {
-		addr = fmt.Sprintf(":%v", defaultValue)
-		if port := os.Getenv(envVar); port != "" {
-			p, err := strconv.Atoi(port)
-			if err != nil {
-				debug("env var %v is not a number (%v)", envVar, port)
-				os.Exit(notANumberExitCode)
-			}
-			if p < 0 || p > 65535 {
-				debug("env var %v is not between [0, 65535] (%v)", envVar, p)
-				os.Exit(outOfRangeExitCode)
-			}
-			addr = ":" + port
-		}
-		return
-	}
-
-	putAddr := portAddressOrExit("LIVELOG_PUT_PORT", DEFAULT_PUT_PORT, 64, 65)
-	getAddr := portAddressOrExit("LIVELOG_GET_PORT", DEFAULT_GET_PORT, 66, 67)
-
 	server := http.Server{
 		// Main put server listens on the public root for the worker.
-		Addr:    putAddr,
+		Addr:    ":60022",
 		Handler: routes,
 	}
 
@@ -217,7 +200,7 @@ func main() {
 
 		// Initialize the sub server in another go routine...
 		debug("Begin consuming...")
-		go startLogServe(stream, getAddr)
+		go startLogServe(stream)
 		consumeErr := stream.Consume()
 		if consumeErr != nil {
 			log.Println("Error finalizing consume of stream", consumeErr)
